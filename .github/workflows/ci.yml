@@ -1,0 +1,89 @@
+name: package CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Validate workflow
+        uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+        with:
+          args: .github/workflows/ci.yml
+
+      - name: Verify Zed and Gleam metadata agree
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import tomllib
+          from pathlib import Path
+
+          with Path(".zpkg.toml").open("rb") as handle:
+              zed = tomllib.load(handle)["package"]
+          with Path("gleam.toml").open("rb") as handle:
+              gleam = tomllib.load(handle)
+
+          assert gleam["version"] == zed["version"], gleam["version"]
+          assert gleam["licences"] == [zed["license"]], gleam["licences"]
+          assert zed["org"] == "zed-pkg-test", zed["org"]
+          assert zed["repository"]["url"] == "https://github.com/zed-pkg-test/gleam-lib"
+
+          # Gleam module names must be valid identifiers, so like pub they cannot
+          # be the kebab-case zed name. Pin the mapping explicitly.
+          expected = f"{zed['org']}_{zed['name']}".replace("-", "_")
+          assert gleam["name"] == expected, f"{gleam['name']} != {expected}"
+
+          # Gleam has no zed adapter and Hex is not a native publish target, so
+          # this package must NOT declare a native release route -- there is
+          # nothing behind it. Asserting the absence keeps a plausible-looking
+          # but dead `registry = "hex"` from being added later.
+          with Path(".zpkg.toml").open("rb") as handle:
+              full = tomllib.load(handle)
+          assert "targets" not in full, "gleam-lib is single-language by design"
+          PY
+
+      - uses: erlef/setup-beam@5304e04ea2b355f03681464e683d92e3b2f18451 # v1
+        with:
+          otp-version: "27"
+          gleam-version: "1.17.0"
+
+      - name: Format, build, and test
+        run: |
+          set -euo pipefail
+          gleam format --check src test
+          gleam build
+          gleam test
+
+      - name: Audit tracked contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files > "$RUNNER_TEMP/tracked.txt"
+          cat "$RUNNER_TEMP/tracked.txt"
+          for required in gleam.toml src/zed_pkg_test_gleam_lib.gleam README.md; do
+            grep -Fxq "$required" "$RUNNER_TEMP/tracked.txt" \
+              || { echo "required package file missing: $required" >&2; exit 1; }
+          done
+          # build/ holds compiled BEAM artifacts; publishing them would ship
+          # host-specific bytecode.
+          if grep -Eq '(^|/)(build|\.zed)/' "$RUNNER_TEMP/tracked.txt"; then
+            echo "build or local Zed state leaked into the package" >&2
+            exit 1
+          fi

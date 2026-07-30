@@ -1,0 +1,10 @@
+[package]
+org = "zed-pkg-test"
+name = "gleam-lib"
+version = "1.0.0"
+description = "A tiny Gleam package sourced via zed (complements Hex)."
+license = "MIT"
+
+[package.repository]
+vcs = "git"
+url = "https://github.com/zed-pkg-test/gleam-lib"

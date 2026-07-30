@@ -1,0 +1,11 @@
+name = "zed_pkg_test_gleam_lib"
+version = "1.0.0"
+licences = ["MIT"]
+description = "A tiny Gleam package sourced via zed (complements Hex)."
+repository = { type = "github", user = "zed-pkg-test", repo = "gleam-lib" }
+
+[dependencies]
+gleam_stdlib = ">= 0.34.0 and < 2.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
